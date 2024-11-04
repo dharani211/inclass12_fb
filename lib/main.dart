@@ -1,11 +1,11 @@
-// Import packages
+// Import Flutter and Firebase packages
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(); // Initialize Firebase
+  await Firebase.initializeApp();
   runApp(InventoryApp());
 }
 
@@ -31,7 +31,7 @@ class InventoryHomePage extends StatefulWidget {
 }
 
 class _InventoryHomePageState extends State<InventoryHomePage> {
-  final CollectionReference inventoryCollection =
+  final CollectionReference inventory =
       FirebaseFirestore.instance.collection('inventory');
 
   @override
@@ -41,172 +41,175 @@ class _InventoryHomePageState extends State<InventoryHomePage> {
         title: Text(widget.title),
       ),
       body: StreamBuilder(
-        stream: inventoryCollection.snapshots(),
+        stream: inventory.snapshots(),
         builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
-          if (!snapshot.hasData)
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          }
+          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            return Center(child: Text('No inventory items available'));
+          }
 
-          final items = snapshot.data!.docs;
-          return ListView.builder(
-            itemCount: items.length,
-            itemBuilder: (context, index) {
-              var item = items[index];
-              return ListTile(
-                title: Text(item['name']),
-                subtitle: Text('Quantity: ${item['quantity']}'),
-                trailing: IconButton(
-                  icon: Icon(Icons.delete),
-                  onPressed: () {
-                    inventoryCollection.doc(item.id).delete(); // Delete item
-                  },
-                ),
-                onTap: () {
-                  // Navigate to the update item page
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => UpdateItemPage(item: item),
+          return Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: ListView(
+              children: snapshot.data!.docs.map((document) {
+                return Card(
+                  margin: EdgeInsets.symmetric(vertical: 8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Item: ${document['name']}',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        SizedBox(height: 8),
+                        Text('Quantity: ${document['quantity']}'),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            IconButton(
+                              icon: Icon(Icons.edit),
+                              onPressed: () {
+                                _updateItemDialog(document);
+                              },
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.delete),
+                              onPressed: () {
+                                inventory.doc(document.id).delete();
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                  );
-                },
-              );
-            },
+                  ),
+                );
+              }).toList(),
+            ),
           );
         },
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          // Navigate to the add item page
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => AddItemPage()),
-          );
+          _addItemDialog();
         },
+        tooltip: 'Add Item',
         child: Icon(Icons.add),
       ),
     );
   }
-}
 
-class AddItemPage extends StatelessWidget {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController quantityController = TextEditingController();
+  Future<void> _addItemDialog() async {
+    String itemName = "";
+    String itemQuantity = "";
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Add Item')),
-      body: Form(
-        key: _formKey,
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Column(
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Add New Item'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              TextFormField(
-                controller: nameController,
-                decoration: InputDecoration(labelText: 'Item Name'),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter item name';
-                  }
-                  return null;
+              TextField(
+                decoration: InputDecoration(hintText: 'Item Name'),
+                onChanged: (value) {
+                  itemName = value;
                 },
               ),
-              TextFormField(
-                controller: quantityController,
-                decoration: InputDecoration(labelText: 'Quantity'),
+              TextField(
+                decoration: InputDecoration(hintText: 'Quantity'),
                 keyboardType: TextInputType.number,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter quantity';
-                  }
-                  return null;
+                onChanged: (value) {
+                  itemQuantity = value;
                 },
-              ),
-              SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () {
-                  if (_formKey.currentState!.validate()) {
-                    FirebaseFirestore.instance.collection('inventory').add({
-                      'name': nameController.text,
-                      'quantity': int.parse(quantityController.text),
-                    });
-                    Navigator.pop(context); // Return to home page
-                  }
-                },
-                child: Text('Add Item'),
               ),
             ],
           ),
-        ),
-      ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                if (itemName.isNotEmpty && itemQuantity.isNotEmpty) {
+                  inventory.add({
+                    'name': itemName,
+                    'quantity': int.parse(itemQuantity),
+                  });
+                }
+                Navigator.of(context).pop();
+              },
+              child: Text('Add'),
+            ),
+          ],
+        );
+      },
     );
   }
-}
 
-class UpdateItemPage extends StatelessWidget {
-  final QueryDocumentSnapshot item;
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController nameController;
-  final TextEditingController quantityController;
+  Future<void> _updateItemDialog(DocumentSnapshot document) async {
+    String itemName = document['name'];
+    String itemQuantity = document['quantity'].toString();
 
-  UpdateItemPage({required this.item})
-      : nameController = TextEditingController(text: item['name']),
-        quantityController =
-            TextEditingController(text: item['quantity'].toString());
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('Update Item')),
-      body: Form(
-        key: _formKey,
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Column(
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Update Item'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              TextFormField(
-                controller: nameController,
-                decoration: InputDecoration(labelText: 'Item Name'),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter item name';
-                  }
-                  return null;
+              TextField(
+                decoration: InputDecoration(hintText: 'Item Name'),
+                controller: TextEditingController(text: itemName),
+                onChanged: (value) {
+                  itemName = value;
                 },
               ),
-              TextFormField(
-                controller: quantityController,
-                decoration: InputDecoration(labelText: 'Quantity'),
+              TextField(
+                decoration: InputDecoration(hintText: 'Quantity'),
                 keyboardType: TextInputType.number,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter quantity';
-                  }
-                  return null;
+                controller: TextEditingController(text: itemQuantity),
+                onChanged: (value) {
+                  itemQuantity = value;
                 },
-              ),
-              SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () {
-                  if (_formKey.currentState!.validate()) {
-                    FirebaseFirestore.instance
-                        .collection('inventory')
-                        .doc(item.id)
-                        .update({
-                      'name': nameController.text,
-                      'quantity': int.parse(quantityController.text),
-                    });
-                    Navigator.pop(context); // Return to home page
-                  }
-                },
-                child: Text('Update Item'),
               ),
             ],
           ),
-        ),
-      ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                if (itemName.isNotEmpty && itemQuantity.isNotEmpty) {
+                  inventory.doc(document.id).update({
+                    'name': itemName,
+                    'quantity': int.parse(itemQuantity),
+                  });
+                }
+                Navigator.of(context).pop();
+              },
+              child: Text('Update'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
